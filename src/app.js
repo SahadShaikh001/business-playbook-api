@@ -18,43 +18,50 @@ const allowedOrigins = [
   "http://127.0.0.1:5173",
 ];
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      // Allow requests without an Origin header
-      // such as server-to-server requests.
-      if (!origin) {
-        return callback(null, true);
-      }
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests without Origin header
+    if (!origin) {
+      return callback(null, true);
+    }
 
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
 
-      return callback(
-        new Error(`CORS blocked origin: ${origin}`)
-      );
-    },
+    console.error("❌ CORS blocked origin:", origin);
 
-    methods: [
-      "GET",
-      "POST",
-      "PUT",
-      "PATCH",
-      "DELETE",
-      "OPTIONS",
-    ],
+    return callback(null, false);
+  },
 
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-    ],
+  methods: [
+    "GET",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "OPTIONS",
+  ],
 
-    credentials: false,
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+  ],
 
-    optionsSuccessStatus: 204,
-  })
-);
+  credentials: false,
+
+  optionsSuccessStatus: 204,
+};
+
+/*
+  CORS middleware MUST come before routes.
+*/
+app.use(cors(corsOptions));
+
+/*
+  Explicitly handle preflight requests.
+*/
+app.options(/.*/, cors(corsOptions));
 
 /* =========================================================
    BODY PARSER
@@ -86,14 +93,7 @@ app.use("/api/download", downloadRoutes);
 ========================================================= */
 
 app.use((err, req, res, next) => {
-  console.error("API Error:", err.message);
-
-  if (err.message?.startsWith("CORS blocked origin:")) {
-    return res.status(403).json({
-      success: false,
-      message: "CORS origin not allowed",
-    });
-  }
+  console.error("❌ API Error:", err.message);
 
   return res.status(500).json({
     success: false,
