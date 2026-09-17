@@ -8,52 +8,35 @@ const downloadRoutes = require("./routes/downloadRoutes");
 
 const app = express();
 
-const allowedOrigins = [
-  "https://tresco.firm.in",
-  "https://www.tresco.firm.in",
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-];
+/*
+|--------------------------------------------------------------------------
+| CORS
+|--------------------------------------------------------------------------
+*/
 
-const corsOptions = {
-  origin: function (origin, callback) {
-    if (!origin) {
-      return callback(null, true);
-    }
+app.use(
+  cors({
+    origin: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: false,
+    optionsSuccessStatus: 204,
+  })
+);
 
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    console.log("❌ CORS blocked origin:", origin);
-    return callback(null, false);
-  },
-
-  methods: [
-    "GET",
-    "POST",
-    "PUT",
-    "PATCH",
-    "DELETE",
-    "OPTIONS",
-  ],
-
-  allowedHeaders: [
-    "Content-Type",
-    "Authorization",
-  ],
-
-  credentials: false,
-
-  optionsSuccessStatus: 204,
-};
-
-app.use(cors(corsOptions));
-
-// Explicitly handle browser preflight requests
-app.options(/.*/, cors(corsOptions));
+/*
+|--------------------------------------------------------------------------
+| Body parser
+|--------------------------------------------------------------------------
+*/
 
 app.use(express.json());
+
+/*
+|--------------------------------------------------------------------------
+| Health check
+|--------------------------------------------------------------------------
+*/
 
 app.get("/", (req, res) => {
   res.json({
@@ -62,13 +45,25 @@ app.get("/", (req, res) => {
   });
 });
 
+/*
+|--------------------------------------------------------------------------
+| Routes
+|--------------------------------------------------------------------------
+*/
+
 app.use("/api/payment", paymentRoutes);
 app.use("/api/download", downloadRoutes);
 
-app.use((err, req, res, next) => {
-  console.error("API Error:", err.message);
+/*
+|--------------------------------------------------------------------------
+| Error handler
+|--------------------------------------------------------------------------
+*/
 
-  return res.status(500).json({
+app.use((err, req, res, next) => {
+  console.error("API Error:", err);
+
+  res.status(500).json({
     success: false,
     message: "Internal server error",
   });
