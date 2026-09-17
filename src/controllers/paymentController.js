@@ -58,6 +58,37 @@ function roundMoney(value) {
   );
 }
 
+/*
+|--------------------------------------------------------------------------
+| PARSE REQUEST BODY
+|--------------------------------------------------------------------------
+|
+| Checkout frontend sends JSON as text/plain to avoid the browser CORS
+| preflight problem on the hosted GoDaddy environment.
+|
+| This helper supports BOTH:
+|
+| 1. Normal application/json -> req.body is already an object
+| 2. text/plain JSON       -> req.body is a string
+|
+*/
+
+function parseRequestBody(body) {
+  if (typeof body === "string") {
+    try {
+      return JSON.parse(body);
+    } catch (error) {
+      throw new Error("Invalid request body");
+    }
+  }
+
+  if (!body || typeof body !== "object") {
+    throw new Error("Invalid request body");
+  }
+
+  return body;
+}
+
 function generateOrderNumber() {
   const timestamp = Date.now();
 
@@ -214,7 +245,7 @@ async function createDownloadLinks(
   for (const item of items) {
     /*
     |--------------------------------------------------------------------------
-    | Check if token already exists.
+    | Check if token already exists
     |--------------------------------------------------------------------------
     |
     | This protects against duplicate payment verification.
@@ -241,11 +272,11 @@ async function createDownloadLinks(
     ) {
       /*
       |--------------------------------------------------------------------------
-      | The raw token cannot be recovered because only its SHA-256 hash
-      | is stored in the database.
+      | Existing token
       |--------------------------------------------------------------------------
       |
-      | Therefore, we don't create another token here.
+      | The raw token cannot be recovered because only its SHA-256 hash
+      | is stored in the database.
       |
       */
 
@@ -313,11 +344,20 @@ const createOrder = async (
   let connection;
 
   try {
+    /*
+    |--------------------------------------------------------------------------
+    | Parse request body
+    |--------------------------------------------------------------------------
+    */
+
+    const body =
+      parseRequestBody(req.body);
+
     const {
       items,
       couponCode,
       customer,
-    } = req.body;
+    } = body;
 
     /*
     |--------------------------------------------------------------------------
@@ -539,6 +579,12 @@ const createOrder = async (
 
     await connection.commit();
 
+    /*
+    |--------------------------------------------------------------------------
+    | Response
+    |--------------------------------------------------------------------------
+    */
+
     return res.status(200).json({
       success: true,
 
@@ -606,11 +652,20 @@ const verifyPayment = async (
   let connection;
 
   try {
+    /*
+    |--------------------------------------------------------------------------
+    | Parse request body
+    |--------------------------------------------------------------------------
+    */
+
+    const body =
+      parseRequestBody(req.body);
+
     const {
       razorpay_order_id,
       razorpay_payment_id,
       razorpay_signature,
-    } = req.body;
+    } = body;
 
     /*
     |--------------------------------------------------------------------------
@@ -636,7 +691,7 @@ const verifyPayment = async (
     |--------------------------------------------------------------------------
     */
 
-    const body =
+    const signatureBody =
       razorpay_order_id +
       "|" +
       razorpay_payment_id;
@@ -647,7 +702,7 @@ const verifyPayment = async (
           "sha256",
           process.env.RAZORPAY_KEY_SECRET
         )
-        .update(body)
+        .update(signatureBody)
         .digest("hex");
 
     const receivedSignature =
@@ -785,8 +840,7 @@ const verifyPayment = async (
     | Already PAID
     |--------------------------------------------------------------------------
     |
-    | If Razorpay sends the verification request again, don't create
-    | duplicate download tokens or change the order.
+    | If verification is sent again, don't create duplicate tokens.
     |
     */
 
@@ -880,13 +934,7 @@ const verifyPayment = async (
     | SEND PURCHASE EMAIL
     |--------------------------------------------------------------------------
     |
-    | IMPORTANT:
-    | Email is sent AFTER the database transaction is committed.
-    |
-    | If email fails:
-    | - Payment remains PAID
-    | - Download tokens remain valid
-    | - Customer can still download from the success page
+    | Email is sent AFTER database commit.
     |
     */
 
@@ -946,7 +994,7 @@ const verifyPayment = async (
     } catch (emailError) {
       /*
       |--------------------------------------------------------------------------
-      | Do NOT fail the payment because email failed.
+      | Do NOT fail payment because email failed.
       |--------------------------------------------------------------------------
       */
 
