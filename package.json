@@ -1,7 +1,7 @@
 {
   "name": "business-playbook-backend",
   "version": "1.0.0",
-  "description": "Backend for Business Playbook website",
+  "description": "Backend API for Business Playbook website",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

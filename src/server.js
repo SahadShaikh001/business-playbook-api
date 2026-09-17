@@ -3,22 +3,75 @@
 require("dotenv").config();
 
 const app = require("./app");
-const { testDatabaseConnection } = require("./config/db");
+const {
+  testDatabaseConnection,
+} = require("./config/db");
 
-const PORT = Number(process.env.PORT || 5000);
+
+/*
+|--------------------------------------------------------------------------
+| PORT
+|--------------------------------------------------------------------------
+*/
+
+const PORT = Number(
+  process.env.PORT || 5000
+);
+
+
+/*
+|--------------------------------------------------------------------------
+| START SERVER
+|--------------------------------------------------------------------------
+*/
 
 async function startServer() {
   try {
+
+    /*
+    |--------------------------------------------------------------------------
+    | Test MySQL connection before starting the API
+    |--------------------------------------------------------------------------
+    */
+
     await testDatabaseConnection();
 
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Business Playbook API running on port ${PORT}`);
-    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Start HTTP server
+    |--------------------------------------------------------------------------
+    */
+
+    app.listen(
+      PORT,
+      "0.0.0.0",
+      () => {
+        console.log(
+          `Business Playbook API running on port ${PORT}`
+        );
+      }
+    );
+
   } catch (error) {
-    console.error("❌ MySQL connection failed:");
-    console.error(error.message);
+
+    console.error(
+      "❌ MySQL connection failed:"
+    );
+
+    console.error(
+      error.message
+    );
+
     process.exit(1);
   }
 }
+
+
+/*
+|--------------------------------------------------------------------------
+| RUN
+|--------------------------------------------------------------------------
+*/
 
 startServer();

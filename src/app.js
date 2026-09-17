@@ -12,8 +12,8 @@ const app = express();
 | CORS
 |--------------------------------------------------------------------------
 |
-| Manual CORS handling is used because the hosted OPTIONS response was
-| not returning Access-Control-Allow-Origin correctly.
+| Manual CORS handling is used because the hosted GoDaddy environment
+| previously did not return Access-Control-Allow-Origin correctly.
 |
 */
 
@@ -24,18 +24,55 @@ const allowedOrigins = [
   "http://127.0.0.1:5173",
 ];
 
+/*
+|--------------------------------------------------------------------------
+| CORS MIDDLEWARE
+|--------------------------------------------------------------------------
+*/
+
 app.use((req, res, next) => {
   const origin = req.headers.origin;
 
-  if (origin && allowedOrigins.includes(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Vary", "Origin");
+  /*
+  |--------------------------------------------------------------------------
+  | Allow only known frontend origins
+  |--------------------------------------------------------------------------
+  */
+
+  if (
+    origin &&
+    allowedOrigins.includes(origin)
+  ) {
+    res.setHeader(
+      "Access-Control-Allow-Origin",
+      origin
+    );
+
+    /*
+    | Important when the response varies by Origin.
+    */
+    res.setHeader(
+      "Vary",
+      "Origin"
+    );
   }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Allowed methods
+  |--------------------------------------------------------------------------
+  */
 
   res.setHeader(
     "Access-Control-Allow-Methods",
     "GET, POST, PUT, PATCH, DELETE, OPTIONS"
   );
+
+  /*
+  |--------------------------------------------------------------------------
+  | Allowed request headers
+  |--------------------------------------------------------------------------
+  */
 
   res.setHeader(
     "Access-Control-Allow-Headers",
@@ -46,53 +83,91 @@ app.use((req, res, next) => {
   |--------------------------------------------------------------------------
   | Preflight
   |--------------------------------------------------------------------------
+  |
+  | The current checkout uses text/plain JSON to avoid unnecessary
+  | browser preflight requests, but OPTIONS is still supported.
+  |
   */
 
   if (req.method === "OPTIONS") {
-    return res.status(200).end();
+    return res
+      .status(200)
+      .end();
   }
 
   next();
 });
 
+
 /*
 |--------------------------------------------------------------------------
-| Body parser
+| BODY PARSERS
 |--------------------------------------------------------------------------
 |
-| Checkout requests use text/plain intentionally to avoid browser
-| CORS preflight caused by application/json.
+| 1. text/plain
+|    Used by the current Checkout.jsx to avoid CORS preflight.
+|
+| 2. application/json
+|    Keeps normal JSON API requests working as well.
 |
 */
 
-app.use(express.text({ type: "text/plain" }));
-app.use(express.json());
+app.use(
+  express.text({
+    type: "text/plain",
+    limit: "100kb",
+  })
+);
+
+app.use(
+  express.json({
+    limit: "100kb",
+  })
+);
+
 
 /*
 |--------------------------------------------------------------------------
-| Health check
+| HEALTH CHECK
 |--------------------------------------------------------------------------
 */
 
 app.get("/", (req, res) => {
-  res.json({
+  res.status(200).json({
     success: true,
-    message: "Business Playbook API is running",
+    message:
+      "Business Playbook API is running",
   });
 });
 
+
 /*
 |--------------------------------------------------------------------------
-| Routes
+| PAYMENT ROUTES
 |--------------------------------------------------------------------------
 */
 
-app.use("/api/payment", paymentRoutes);
-app.use("/api/download", downloadRoutes);
+app.use(
+  "/api/payment",
+  paymentRoutes
+);
+
 
 /*
 |--------------------------------------------------------------------------
-| 404
+| DOWNLOAD ROUTES
+|--------------------------------------------------------------------------
+*/
+
+app.use(
+  "/api/download",
+  downloadRoutes
+);
+
+
+/*
+|--------------------------------------------------------------------------
+| 404 ROUTE
 |--------------------------------------------------------------------------
 */
 
@@ -103,19 +178,37 @@ app.use((req, res) => {
   });
 });
 
+
 /*
 |--------------------------------------------------------------------------
-| Error handler
+| GLOBAL ERROR HANDLER
 |--------------------------------------------------------------------------
 */
 
-app.use((err, req, res, next) => {
-  console.error("API Error:", err);
+app.use(
+  (err, req, res, next) => {
+    console.error(
+      "API Error:",
+      err
+    );
 
-  res.status(500).json({
-    success: false,
-    message: "Internal server error",
-  });
-});
+    /*
+    |--------------------------------------------------------------------------
+    | If headers were already sent, let Express handle it.
+    |--------------------------------------------------------------------------
+    */
+
+    if (res.headersSent) {
+      return next(err);
+    }
+
+    res.status(500).json({
+      success: false,
+      message:
+        "Internal server error",
+    });
+  }
+);
+
 
 module.exports = app;

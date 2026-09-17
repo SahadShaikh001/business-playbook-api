@@ -8,6 +8,21 @@ const {
 
 const router = express.Router();
 
-router.get("/:token", downloadBook);
+
+/*
+|--------------------------------------------------------------------------
+| SECURE BOOK DOWNLOAD
+|--------------------------------------------------------------------------
+|
+| Example:
+| GET /api/download/<secure-token>
+|
+*/
+
+router.get(
+  "/:token",
+  downloadBook
+);
+
 
 module.exports = router;

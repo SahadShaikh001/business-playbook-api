@@ -1,3 +1,5 @@
+"use strict";
+
 const express = require("express");
 
 const {
@@ -7,8 +9,25 @@ const {
 
 const router = express.Router();
 
-router.post("/create-order", createOrder);
 
-router.post("/verify-payment", verifyPayment);
+/* =========================================================
+   CREATE PAYMENT ORDER
+========================================================= */
+
+router.post(
+  "/create-order",
+  createOrder
+);
+
+
+/* =========================================================
+   VERIFY PAYMENT
+========================================================= */
+
+router.post(
+  "/verify-payment",
+  verifyPayment
+);
+
 
 module.exports = router;
