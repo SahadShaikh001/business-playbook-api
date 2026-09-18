@@ -1,7 +1,6 @@
 "use strict";
 
 const express = require("express");
-const cors = require("cors");
 
 const paymentRoutes = require("./routes/paymentRoutes");
 const downloadRoutes = require("./routes/downloadRoutes");
@@ -9,66 +8,50 @@ const downloadRoutes = require("./routes/downloadRoutes");
 const app = express();
 
 /* =========================================================
-   CORS
+   FIXED CORS
 ========================================================= */
 
-const allowedOrigins = [
-  "https://tresco.firm.in",
-  "https://www.tresco.firm.in",
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-];
+const FRONTEND_ORIGIN = "https://tresco.firm.in";
 
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests without Origin, such as curl/server-to-server
-    if (!origin) {
-      return callback(null, true);
-    }
+app.use((req, res, next) => {
+  // Always send the production frontend origin.
+  res.setHeader(
+    "Access-Control-Allow-Origin",
+    FRONTEND_ORIGIN
+  );
 
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+  );
 
-    return callback(
-      new Error(`CORS blocked origin: ${origin}`)
-    );
-  },
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, Accept, Origin, X-Requested-With"
+  );
 
-  methods: [
-    "GET",
-    "POST",
-    "PUT",
-    "PATCH",
-    "DELETE",
-    "OPTIONS",
-  ],
+  res.setHeader(
+    "Access-Control-Max-Age",
+    "86400"
+  );
 
-  allowedHeaders: [
-    "Content-Type",
-    "Authorization",
-    "Accept",
-    "Origin",
-    "X-Requested-With",
-  ],
+  res.setHeader(
+    "Vary",
+    "Origin"
+  );
 
-  credentials: false,
+  // Handle any OPTIONS request immediately.
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
 
-  optionsSuccessStatus: 204,
-
-  maxAge: 86400,
-};
-
-app.use(cors(corsOptions));
+  next();
+});
 
 /* =========================================================
    BODY PARSERS
 ========================================================= */
 
-/*
- * Frontend sends checkout JSON using text/plain
- * to avoid unnecessary browser preflight behavior.
- */
 app.use(
   express.text({
     type: "text/plain",
@@ -98,11 +81,9 @@ app.use((req, res, next) => {
     `${new Date().toISOString()} ${req.method} ${req.originalUrl}`
   );
 
-  if (req.headers.origin) {
-    console.log(
-      `Origin: ${req.headers.origin}`
-    );
-  }
+  console.log(
+    `Origin: ${req.headers.origin || "none"}`
+  );
 
   console.log(
     `Content-Type: ${
@@ -174,15 +155,21 @@ app.use((err, req, res, next) => {
   console.error("❌ API ERROR:");
   console.error(err);
 
-  if (
-    err.message &&
-    err.message.startsWith("CORS blocked origin:")
-  ) {
-    return res.status(403).json({
-      success: false,
-      message: "CORS origin not allowed",
-    });
-  }
+  // Ensure CORS is also present on error responses.
+  res.setHeader(
+    "Access-Control-Allow-Origin",
+    FRONTEND_ORIGIN
+  );
+
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+  );
+
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, Accept, Origin, X-Requested-With"
+  );
 
   res.status(500).json({
     success: false,
