@@ -1,15 +1,15 @@
 "use strict";
 
 const express = require("express");
+const cors = require("cors");
 
 const paymentRoutes = require("./routes/paymentRoutes");
 const downloadRoutes = require("./routes/downloadRoutes");
 
 const app = express();
 
-
 /* =========================================================
-   ALLOWED ORIGINS
+   CORS
 ========================================================= */
 
 const allowedOrigins = [
@@ -19,110 +19,56 @@ const allowedOrigins = [
   "http://127.0.0.1:5173",
 ];
 
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests without Origin, such as curl/server-to-server
+    if (!origin) {
+      return callback(null, true);
+    }
 
-/* =========================================================
-   CORS
-========================================================= */
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
 
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-
-  /*
-  |--------------------------------------------------------------------------
-  | Allow known frontend origins
-  |--------------------------------------------------------------------------
-  */
-
-  if (
-    origin &&
-    allowedOrigins.includes(origin)
-  ) {
-    res.setHeader(
-      "Access-Control-Allow-Origin",
-      origin
+    return callback(
+      new Error(`CORS blocked origin: ${origin}`)
     );
+  },
 
-    res.setHeader(
-      "Vary",
-      "Origin"
-    );
-  }
+  methods: [
+    "GET",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "OPTIONS",
+  ],
 
-  /*
-  |--------------------------------------------------------------------------
-  | Allowed methods
-  |--------------------------------------------------------------------------
-  */
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "Accept",
+    "Origin",
+    "X-Requested-With",
+  ],
 
-  res.setHeader(
-    "Access-Control-Allow-Methods",
-    "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-  );
+  credentials: false,
 
-  /*
-  |--------------------------------------------------------------------------
-  | Allowed headers
-  |--------------------------------------------------------------------------
-  */
+  optionsSuccessStatus: 204,
 
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, Accept, Origin, X-Requested-With"
-  );
+  maxAge: 86400,
+};
 
-  /*
-  |--------------------------------------------------------------------------
-  | Preflight cache
-  |--------------------------------------------------------------------------
-  */
-
-  res.setHeader(
-    "Access-Control-Max-Age",
-    "86400"
-  );
-
-  /*
-  |--------------------------------------------------------------------------
-  | OPTIONS / PREFLIGHT
-  |--------------------------------------------------------------------------
-  */
-
-  if (req.method === "OPTIONS") {
-    return res
-      .status(204)
-      .end();
-  }
-
-  next();
-});
-
+app.use(cors(corsOptions));
 
 /* =========================================================
    BODY PARSERS
-=========================================================
-
-   IMPORTANT:
-
-   Checkout currently sends:
-
-       Content-Type: text/plain
-
-   with a JSON string inside the body.
-
-   Therefore express.text() MUST be registered.
-
-   express.json() remains enabled so normal JSON requests
-   continue to work.
-
 ========================================================= */
 
-
 /*
-|--------------------------------------------------------------------------
-| TEXT/PLAIN
-|--------------------------------------------------------------------------
-*/
-
+ * Frontend sends checkout JSON using text/plain
+ * to avoid unnecessary browser preflight behavior.
+ */
 app.use(
   express.text({
     type: "text/plain",
@@ -130,25 +76,11 @@ app.use(
   })
 );
 
-
-/*
-|--------------------------------------------------------------------------
-| JSON
-|--------------------------------------------------------------------------
-*/
-
 app.use(
   express.json({
     limit: "100kb",
   })
 );
-
-
-/*
-|--------------------------------------------------------------------------
-| URL ENCODED
-|--------------------------------------------------------------------------
-*/
 
 app.use(
   express.urlencoded({
@@ -157,9 +89,8 @@ app.use(
   })
 );
 
-
 /* =========================================================
-   REQUEST LOGGER
+   REQUEST LOGGING
 ========================================================= */
 
 app.use((req, res, next) => {
@@ -182,38 +113,31 @@ app.use((req, res, next) => {
   next();
 });
 
-
 /* =========================================================
    ROOT
 ========================================================= */
 
 app.get("/", (req, res) => {
-  res.status(200).json({
+  res.json({
     success: true,
-    message:
-      "Business Playbook API is running",
+    message: "Business Playbook API is running",
   });
 });
 
-
 /* =========================================================
-   HEALTH CHECK
+   HEALTH
 ========================================================= */
 
 app.get("/api/health", (req, res) => {
-  res.status(200).json({
+  res.json({
     success: true,
-    message:
-      "Business Playbook API is healthy",
-
-    timestamp:
-      new Date().toISOString(),
+    message: "Business Playbook API is healthy",
+    timestamp: new Date().toISOString(),
   });
 });
 
-
 /* =========================================================
-   PAYMENT ROUTES
+   PAYMENT
 ========================================================= */
 
 app.use(
@@ -221,16 +145,14 @@ app.use(
   paymentRoutes
 );
 
-
 /* =========================================================
-   DOWNLOAD ROUTES
+   DOWNLOAD
 ========================================================= */
 
 app.use(
   "/api/download",
   downloadRoutes
 );
-
 
 /* =========================================================
    404
@@ -239,63 +161,35 @@ app.use(
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-
-    message:
-      "API endpoint not found",
-
-    path:
-      req.originalUrl,
+    message: "Route not found",
+    path: req.originalUrl,
   });
 });
 
-
 /* =========================================================
-   GLOBAL ERROR HANDLER
+   ERROR HANDLER
 ========================================================= */
 
-app.use(
-  (err, req, res, next) => {
-    console.error(
-      "API Error:",
-      err
-    );
+app.use((err, req, res, next) => {
+  console.error("❌ API ERROR:");
+  console.error(err);
 
-    if (res.headersSent) {
-      return next(err);
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | CORS on error responses
-    |--------------------------------------------------------------------------
-    */
-
-    const origin =
-      req.headers.origin;
-
-    if (
-      origin &&
-      allowedOrigins.includes(origin)
-    ) {
-      res.setHeader(
-        "Access-Control-Allow-Origin",
-        origin
-      );
-
-      res.setHeader(
-        "Vary",
-        "Origin"
-      );
-    }
-
-    res.status(500).json({
+  if (
+    err.message &&
+    err.message.startsWith("CORS blocked origin:")
+  ) {
+    return res.status(403).json({
       success: false,
-
-      message:
-        "Internal server error",
+      message: "CORS origin not allowed",
     });
   }
-);
 
+  res.status(500).json({
+    success: false,
+    message:
+      err.message ||
+      "Internal server error",
+  });
+});
 
 module.exports = app;
