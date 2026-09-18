@@ -7,15 +7,10 @@ const downloadRoutes = require("./routes/downloadRoutes");
 
 const app = express();
 
-/*
-|--------------------------------------------------------------------------
-| CORS
-|--------------------------------------------------------------------------
-|
-| Manual CORS handling is used because the hosted GoDaddy environment
-| previously did not return Access-Control-Allow-Origin correctly.
-|
-*/
+
+/* =========================================================
+   ALLOWED ORIGINS
+========================================================= */
 
 const allowedOrigins = [
   "https://tresco.firm.in",
@@ -24,18 +19,17 @@ const allowedOrigins = [
   "http://127.0.0.1:5173",
 ];
 
-/*
-|--------------------------------------------------------------------------
-| CORS MIDDLEWARE
-|--------------------------------------------------------------------------
-*/
+
+/* =========================================================
+   CORS
+========================================================= */
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
 
   /*
   |--------------------------------------------------------------------------
-  | Allow only known frontend origins
+  | Allow known frontend origins
   |--------------------------------------------------------------------------
   */
 
@@ -48,9 +42,6 @@ app.use((req, res, next) => {
       origin
     );
 
-    /*
-    | Important when the response varies by Origin.
-    */
     res.setHeader(
       "Vary",
       "Origin"
@@ -70,28 +61,35 @@ app.use((req, res, next) => {
 
   /*
   |--------------------------------------------------------------------------
-  | Allowed request headers
+  | Allowed headers
   |--------------------------------------------------------------------------
   */
 
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type, Authorization"
+    "Content-Type, Authorization, Accept, Origin, X-Requested-With"
   );
 
   /*
   |--------------------------------------------------------------------------
-  | Preflight
+  | Preflight cache
   |--------------------------------------------------------------------------
-  |
-  | The current checkout uses text/plain JSON to avoid unnecessary
-  | browser preflight requests, but OPTIONS is still supported.
-  |
+  */
+
+  res.setHeader(
+    "Access-Control-Max-Age",
+    "86400"
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | OPTIONS / PREFLIGHT
+  |--------------------------------------------------------------------------
   */
 
   if (req.method === "OPTIONS") {
     return res
-      .status(200)
+      .status(204)
       .end();
   }
 
@@ -99,17 +97,30 @@ app.use((req, res, next) => {
 });
 
 
+/* =========================================================
+   BODY PARSERS
+=========================================================
+
+   IMPORTANT:
+
+   Checkout currently sends:
+
+       Content-Type: text/plain
+
+   with a JSON string inside the body.
+
+   Therefore express.text() MUST be registered.
+
+   express.json() remains enabled so normal JSON requests
+   continue to work.
+
+========================================================= */
+
+
 /*
 |--------------------------------------------------------------------------
-| BODY PARSERS
+| TEXT/PLAIN
 |--------------------------------------------------------------------------
-|
-| 1. text/plain
-|    Used by the current Checkout.jsx to avoid CORS preflight.
-|
-| 2. application/json
-|    Keeps normal JSON API requests working as well.
-|
 */
 
 app.use(
@@ -118,6 +129,13 @@ app.use(
     limit: "100kb",
   })
 );
+
+
+/*
+|--------------------------------------------------------------------------
+| JSON
+|--------------------------------------------------------------------------
+*/
 
 app.use(
   express.json({
@@ -128,9 +146,46 @@ app.use(
 
 /*
 |--------------------------------------------------------------------------
-| HEALTH CHECK
+| URL ENCODED
 |--------------------------------------------------------------------------
 */
+
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: "100kb",
+  })
+);
+
+
+/* =========================================================
+   REQUEST LOGGER
+========================================================= */
+
+app.use((req, res, next) => {
+  console.log(
+    `${new Date().toISOString()} ${req.method} ${req.originalUrl}`
+  );
+
+  if (req.headers.origin) {
+    console.log(
+      `Origin: ${req.headers.origin}`
+    );
+  }
+
+  console.log(
+    `Content-Type: ${
+      req.headers["content-type"] || "none"
+    }`
+  );
+
+  next();
+});
+
+
+/* =========================================================
+   ROOT
+========================================================= */
 
 app.get("/", (req, res) => {
   res.status(200).json({
@@ -141,11 +196,25 @@ app.get("/", (req, res) => {
 });
 
 
-/*
-|--------------------------------------------------------------------------
-| PAYMENT ROUTES
-|--------------------------------------------------------------------------
-*/
+/* =========================================================
+   HEALTH CHECK
+========================================================= */
+
+app.get("/api/health", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message:
+      "Business Playbook API is healthy",
+
+    timestamp:
+      new Date().toISOString(),
+  });
+});
+
+
+/* =========================================================
+   PAYMENT ROUTES
+========================================================= */
 
 app.use(
   "/api/payment",
@@ -153,11 +222,9 @@ app.use(
 );
 
 
-/*
-|--------------------------------------------------------------------------
-| DOWNLOAD ROUTES
-|--------------------------------------------------------------------------
-*/
+/* =========================================================
+   DOWNLOAD ROUTES
+========================================================= */
 
 app.use(
   "/api/download",
@@ -165,25 +232,26 @@ app.use(
 );
 
 
-/*
-|--------------------------------------------------------------------------
-| 404 ROUTE
-|--------------------------------------------------------------------------
-*/
+/* =========================================================
+   404
+========================================================= */
 
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    message: "Route not found",
+
+    message:
+      "API endpoint not found",
+
+    path:
+      req.originalUrl,
   });
 });
 
 
-/*
-|--------------------------------------------------------------------------
-| GLOBAL ERROR HANDLER
-|--------------------------------------------------------------------------
-*/
+/* =========================================================
+   GLOBAL ERROR HANDLER
+========================================================= */
 
 app.use(
   (err, req, res, next) => {
@@ -192,18 +260,37 @@ app.use(
       err
     );
 
-    /*
-    |--------------------------------------------------------------------------
-    | If headers were already sent, let Express handle it.
-    |--------------------------------------------------------------------------
-    */
-
     if (res.headersSent) {
       return next(err);
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | CORS on error responses
+    |--------------------------------------------------------------------------
+    */
+
+    const origin =
+      req.headers.origin;
+
+    if (
+      origin &&
+      allowedOrigins.includes(origin)
+    ) {
+      res.setHeader(
+        "Access-Control-Allow-Origin",
+        origin
+      );
+
+      res.setHeader(
+        "Vary",
+        "Origin"
+      );
+    }
+
     res.status(500).json({
       success: false,
+
       message:
         "Internal server error",
     });
