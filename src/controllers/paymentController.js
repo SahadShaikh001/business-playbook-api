@@ -50,15 +50,35 @@ const COLLECTION_PRICE = {
 
 /* =========================================================
    COUPONS
+=========================================================
+
+   INDIA
+   PLAYBOOK5 = 5% discount
+   FREE100   = ₹100 fixed discount
+
+   INTERNATIONAL
+   PIR       = 10% discount
 ========================================================= */
 
 const COUPONS = {
   INDIA: {
-    PLAYBOOK5: 0.05,
+    PLAYBOOK5: {
+      type: "percentage",
+      value: 0.05,
+    },
+
+    FREE100: {
+      type: "fixed",
+      value: 100,
+      currency: "INR",
+    },
   },
 
   INTERNATIONAL: {
-    PIR: 0.10,
+    PIR: {
+      type: "percentage",
+      value: 0.10,
+    },
   },
 };
 
@@ -239,6 +259,7 @@ function getCouponDiscount({
   country,
   couponCode,
   subtotal,
+  currency,
 }) {
   const normalizedCoupon = String(
     couponCode || ""
@@ -249,7 +270,9 @@ function getCouponDiscount({
   if (!normalizedCoupon) {
     return {
       couponCode: null,
+      couponType: null,
       couponRate: 0,
+      fixedDiscount: 0,
       discount: 0,
     };
   }
@@ -258,12 +281,10 @@ function getCouponDiscount({
     ? COUPONS.INDIA
     : COUPONS.INTERNATIONAL;
 
-  if (
-    !Object.prototype.hasOwnProperty.call(
-      couponGroup,
-      normalizedCoupon
-    )
-  ) {
+  const coupon =
+    couponGroup[normalizedCoupon];
+
+  if (!coupon) {
     throw new HttpError(
       isIndia(country)
         ? "Invalid coupon code for Indian orders."
@@ -272,17 +293,72 @@ function getCouponDiscount({
     );
   }
 
-  const couponRate = Number(
-    couponGroup[normalizedCoupon]
-  );
+  let discount = 0;
+  let couponRate = 0;
+  let fixedDiscount = 0;
 
-  const discount = roundMoney(
-    Number(subtotal) * couponRate
-  );
+  /* ================================================
+     PERCENTAGE COUPON
+  ================================================ */
+
+  if (
+    coupon.type ===
+    "percentage"
+  ) {
+    couponRate =
+      Number(coupon.value);
+
+    discount = roundMoney(
+      Number(subtotal) *
+        couponRate
+    );
+  }
+
+  /* ================================================
+     FIXED COUPON
+  ================================================ */
+
+  else if (
+    coupon.type === "fixed"
+  ) {
+    if (
+      coupon.currency !==
+      currency
+    ) {
+      throw new HttpError(
+        "This coupon is not valid for this currency.",
+        400
+      );
+    }
+
+    fixedDiscount =
+      Number(coupon.value);
+
+    /*
+     * Never allow discount to become larger
+     * than the order subtotal.
+     */
+    discount = Math.min(
+      fixedDiscount,
+      Number(subtotal)
+    );
+
+    discount = roundMoney(
+      discount
+    );
+  }
 
   return {
-    couponCode: normalizedCoupon,
+    couponCode:
+      normalizedCoupon,
+
+    couponType:
+      coupon.type,
+
     couponRate,
+
+    fixedDiscount,
+
     discount,
   };
 }
@@ -299,6 +375,10 @@ function calculatePricing(
   const currency =
     getCurrencyForCountry(country);
 
+  /* ================================================
+     INDIVIDUAL TOTAL
+  ================================================ */
+
   const individualSubtotal =
     roundMoney(
       products.reduce(
@@ -311,6 +391,10 @@ function calculatePricing(
       )
     );
 
+  /* ================================================
+     BUNDLE
+  ================================================ */
+
   const isCompleteCollection =
     products.length === 3;
 
@@ -321,6 +405,10 @@ function calculatePricing(
         )
       : individualSubtotal;
 
+  /* ================================================
+     BUNDLE SAVING
+  ================================================ */
+
   const bundleSaving =
     isCompleteCollection
       ? roundMoney(
@@ -329,12 +417,21 @@ function calculatePricing(
         )
       : 0;
 
+  /* ================================================
+     COUPON
+  ================================================ */
+
   const coupon =
     getCouponDiscount({
       country,
       couponCode,
       subtotal,
+      currency,
     });
+
+  /* ================================================
+     FINAL TOTAL
+  ================================================ */
 
   const total = roundMoney(
     subtotal -
@@ -365,8 +462,14 @@ function calculatePricing(
     couponCode:
       coupon.couponCode,
 
+    couponType:
+      coupon.couponType,
+
     couponRate:
       coupon.couponRate,
+
+    fixedDiscount:
+      coupon.fixedDiscount,
 
     discount:
       coupon.discount,
@@ -686,11 +789,8 @@ const createOrder = async (
           ),
 
         /*
-         * India:
-         * INR
-         *
-         * International:
-         * USD
+         * India = INR
+         * International = USD
          */
         currency:
           pricing.currency,
@@ -889,8 +989,14 @@ const createOrder = async (
         couponCode:
           pricing.couponCode,
 
+        couponType:
+          pricing.couponType,
+
         couponRate:
           pricing.couponRate,
+
+        fixedDiscount:
+          pricing.fixedDiscount,
 
         discount:
           pricing.discount,
