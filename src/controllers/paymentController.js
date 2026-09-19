@@ -1,7 +1,6 @@
 "use strict";
 
 const crypto = require("crypto");
-
 const razorpay = require("../config/razorpay");
 const { pool } = require("../config/db");
 
@@ -9,67 +8,52 @@ const {
   sendPurchaseEmail,
 } = require("../services/emailService");
 
-/* =========================================================
-   PRODUCT SOURCE OF TRUTH
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| PRODUCT SOURCE OF TRUTH
+|--------------------------------------------------------------------------
+*/
 
 const PRODUCTS = {
   "how-to-attract-women": {
     id: "how-to-attract-women",
     name: "How to Attract Women",
-
-    USD: 19.99,
-    INR: 499,
+    price: 19.99,
   },
 
   "dopamine-detox": {
     id: "dopamine-detox",
     name: "30 Day Dopamine Detox Workbook",
-
-    USD: 15.99,
-    INR: 299,
+    price: 15.0,
   },
 
   "unlock-focus": {
     id: "unlock-focus",
     name: "How to Unlock Your Focus",
-
-    USD: 15.99,
-    INR: 299,
+    price: 15.0,
   },
 };
 
-/* =========================================================
-   COLLECTION / BUNDLE
-========================================================= */
+const COLLECTION_PRICE = 45.0;
 
-const COLLECTION_PRICE = {
-  USD: 45.00,
-  INR: 999,
-};
-
-/* =========================================================
-   COUPONS
-=========================================================
-
-   INDIA
-   PLAYBOOK5 = 5% discount
-   FREE100   = ₹100 fixed discount
-
-   INTERNATIONAL
-   PIR       = 10% discount
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| COUPONS
+|--------------------------------------------------------------------------
+|
+| India:
+| FREE100 = 100% discount
+|
+| International:
+| PIR = 10% discount
+|
+*/
 
 const COUPONS = {
   INDIA: {
-    PLAYBOOK5: {
-      type: "percentage",
-      value: 0.05,
-    },
-
     FREE100: {
-      type: "fixed",
-      value: 100,
+      type: "percentage",
+      value: 1.0,
       currency: "INR",
     },
   },
@@ -77,35 +61,20 @@ const COUPONS = {
   INTERNATIONAL: {
     PIR: {
       type: "percentage",
-      value: 0.10,
+      value: 0.1,
     },
   },
 };
-
-/* =========================================================
-   DOWNLOAD TOKEN EXPIRY
-========================================================= */
 
 const DOWNLOAD_TOKEN_EXPIRY_DAYS = Number(
   process.env.DOWNLOAD_TOKEN_EXPIRY_DAYS || 30
 );
 
-/* =========================================================
-   CUSTOM HTTP ERROR
-========================================================= */
-
-class HttpError extends Error {
-  constructor(message, statusCode = 400) {
-    super(message);
-
-    this.name = "HttpError";
-    this.statusCode = statusCode;
-  }
-}
-
-/* =========================================================
-   MONEY
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| HELPERS
+|--------------------------------------------------------------------------
+*/
 
 function roundMoney(value) {
   return (
@@ -115,65 +84,29 @@ function roundMoney(value) {
   );
 }
 
-/* =========================================================
-   PARSE REQUEST BODY
-========================================================= */
-
-function parseRequestBody(body) {
-  if (typeof body === "string") {
-    try {
-      return JSON.parse(body);
-    } catch {
-      throw new HttpError(
-        "Invalid request body",
-        400
-      );
-    }
-  }
-
-  if (!body || typeof body !== "object") {
-    throw new HttpError(
-      "Invalid request body",
-      400
-    );
-  }
-
-  return body;
-}
-
-/* =========================================================
-   COUNTRY / CURRENCY
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| COUNTRY HELPER
+|--------------------------------------------------------------------------
+*/
 
 function isIndia(country) {
+  const normalized = String(country || "")
+    .trim()
+    .toLowerCase();
+
   return (
-    String(country || "")
-      .trim()
-      .toLowerCase() === "india"
+    normalized === "india" ||
+    normalized === "in" ||
+    normalized === "ind"
   );
 }
 
-function getCurrencyForCountry(country) {
-  return isIndia(country) ? "INR" : "USD";
-}
-
-function getCurrencySymbol(currency) {
-  return currency === "INR" ? "₹" : "$";
-}
-
-/* =========================================================
-   RAZORPAY AMOUNT
-========================================================= */
-
-function toRazorpayAmount(value) {
-  return Math.round(
-    Number(value) * 100
-  );
-}
-
-/* =========================================================
-   ORDER NUMBER
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| ORDER NUMBER
+|--------------------------------------------------------------------------
+*/
 
 function generateOrderNumber() {
   const timestamp = Date.now();
@@ -186,301 +119,198 @@ function generateOrderNumber() {
   return `BP-${timestamp}-${random}`;
 }
 
-/* =========================================================
-   NORMALIZE PRODUCTS
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| NORMALIZE PRODUCTS
+|--------------------------------------------------------------------------
+*/
 
 function normalizeItems(items) {
   if (
     !Array.isArray(items) ||
     items.length === 0
   ) {
-    throw new HttpError(
-      "No products selected",
-      400
-    );
-  }
-
-  const productIds = items.map((item) =>
-    String(item?.id || "").trim()
-  );
-
-  if (
-    productIds.some(
-      (id) => !id
-    )
-  ) {
-    throw new HttpError(
-      "Invalid product selection",
-      400
+    throw new Error(
+      "No products selected"
     );
   }
 
   const uniqueIds = [
-    ...new Set(productIds),
+    ...new Set(
+      items.map(
+        (item) => item.id
+      )
+    ),
   ];
 
   if (
     uniqueIds.length !==
-    productIds.length
+    items.length
   ) {
-    throw new HttpError(
-      "Duplicate products are not allowed",
-      400
+    throw new Error(
+      "Duplicate products are not allowed"
     );
   }
 
   if (uniqueIds.length > 3) {
-    throw new HttpError(
-      "Maximum 3 products can be purchased",
-      400
+    throw new Error(
+      "Maximum 3 products can be purchased"
     );
   }
 
-  return uniqueIds.map((id) => {
-    const product = PRODUCTS[id];
+  return uniqueIds.map(
+    (id) => {
+      const product =
+        PRODUCTS[id];
 
-    if (!product) {
-      throw new HttpError(
-        `Invalid product: ${id}`,
-        400
-      );
+      if (!product) {
+        throw new Error(
+          `Invalid product: ${id}`
+        );
+      }
+
+      return product;
     }
-
-    return product;
-  });
+  );
 }
 
-/* =========================================================
-   COUPON
-========================================================= */
-
-function getCouponDiscount({
-  country,
-  couponCode,
-  subtotal,
-  currency,
-}) {
-  const normalizedCoupon = String(
-    couponCode || ""
-  )
-    .trim()
-    .toUpperCase();
-
-  if (!normalizedCoupon) {
-    return {
-      couponCode: null,
-      couponType: null,
-      couponRate: 0,
-      fixedDiscount: 0,
-      discount: 0,
-    };
-  }
-
-  const couponGroup = isIndia(country)
-    ? COUPONS.INDIA
-    : COUPONS.INTERNATIONAL;
-
-  const coupon =
-    couponGroup[normalizedCoupon];
-
-  if (!coupon) {
-    throw new HttpError(
-      isIndia(country)
-        ? "Invalid coupon code for Indian orders."
-        : "Invalid coupon code for international orders.",
-      400
-    );
-  }
-
-  let discount = 0;
-  let couponRate = 0;
-  let fixedDiscount = 0;
-
-  /* ================================================
-     PERCENTAGE COUPON
-  ================================================ */
-
-  if (
-    coupon.type ===
-    "percentage"
-  ) {
-    couponRate =
-      Number(coupon.value);
-
-    discount = roundMoney(
-      Number(subtotal) *
-        couponRate
-    );
-  }
-
-  /* ================================================
-     FIXED COUPON
-  ================================================ */
-
-  else if (
-    coupon.type === "fixed"
-  ) {
-    if (
-      coupon.currency !==
-      currency
-    ) {
-      throw new HttpError(
-        "This coupon is not valid for this currency.",
-        400
-      );
-    }
-
-    fixedDiscount =
-      Number(coupon.value);
-
-    /*
-     * Never allow discount to become larger
-     * than the order subtotal.
-     */
-    discount = Math.min(
-      fixedDiscount,
-      Number(subtotal)
-    );
-
-    discount = roundMoney(
-      discount
-    );
-  }
-
-  return {
-    couponCode:
-      normalizedCoupon,
-
-    couponType:
-      coupon.type,
-
-    couponRate,
-
-    fixedDiscount,
-
-    discount,
-  };
-}
-
-/* =========================================================
-   CALCULATE PRICING
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| CALCULATE PRICING
+|--------------------------------------------------------------------------
+|
+| Important:
+| Coupon validation is country-specific.
+|
+| FREE100:
+| - Only India
+| - 100% discount
+| - Total becomes 0
+|
+| PIR:
+| - International
+| - 10% discount
+|
+*/
 
 function calculatePricing(
   products,
-  country,
-  couponCode
+  couponCode,
+  country
 ) {
-  const currency =
-    getCurrencyForCountry(country);
-
-  /* ================================================
-     INDIVIDUAL TOTAL
-  ================================================ */
-
   const individualSubtotal =
     roundMoney(
       products.reduce(
         (sum, product) =>
-          sum +
-          Number(
-            product[currency]
-          ),
+          sum + product.price,
         0
       )
     );
-
-  /* ================================================
-     BUNDLE
-  ================================================ */
 
   const isCompleteCollection =
     products.length === 3;
 
   const subtotal =
     isCompleteCollection
-      ? Number(
-          COLLECTION_PRICE[currency]
-        )
+      ? COLLECTION_PRICE
       : individualSubtotal;
-
-  /* ================================================
-     BUNDLE SAVING
-  ================================================ */
 
   const bundleSaving =
     isCompleteCollection
       ? roundMoney(
           individualSubtotal -
-            subtotal
+            COLLECTION_PRICE
         )
       : 0;
 
-  /* ================================================
-     COUPON
-  ================================================ */
+  const normalizedCoupon =
+    String(couponCode || "")
+      .trim()
+      .toUpperCase();
 
-  const coupon =
-    getCouponDiscount({
-      country,
-      couponCode,
-      subtotal,
-      currency,
-    });
+  let discount = 0;
 
-  /* ================================================
-     FINAL TOTAL
-  ================================================ */
+  /*
+  |--------------------------------------------------------------------------
+  | INDIA
+  |--------------------------------------------------------------------------
+  */
 
-  const total = roundMoney(
-    subtotal -
-      coupon.discount
+  if (isIndia(country)) {
+    if (
+      normalizedCoupon ===
+      "FREE100"
+    ) {
+      discount = roundMoney(
+        subtotal * 1.0
+      );
+    } else if (
+      normalizedCoupon
+    ) {
+      throw new Error(
+        "Invalid coupon for Indian orders. Use FREE100."
+      );
+    }
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | INTERNATIONAL
+  |--------------------------------------------------------------------------
+  */
+
+  else {
+    if (
+      normalizedCoupon ===
+      "PIR"
+    ) {
+      discount = roundMoney(
+        subtotal * 0.1
+      );
+    } else if (
+      normalizedCoupon
+    ) {
+      throw new Error(
+        "Invalid coupon for international orders. Use PIR."
+      );
+    }
+  }
+
+  let total = roundMoney(
+    subtotal - discount
   );
 
-  if (total <= 0) {
-    throw new HttpError(
-      "Invalid order total",
-      400
-    );
+  /*
+  |--------------------------------------------------------------------------
+  | Prevent floating-point issues
+  |--------------------------------------------------------------------------
+  */
+
+  if (total < 0) {
+    total = 0;
   }
 
   return {
-    currency,
-
-    currencySymbol:
-      getCurrencySymbol(currency),
-
-    isCompleteCollection,
-
     individualSubtotal,
 
     subtotal,
 
     bundleSaving,
 
-    couponCode:
-      coupon.couponCode,
-
-    couponType:
-      coupon.couponType,
-
-    couponRate:
-      coupon.couponRate,
-
-    fixedDiscount:
-      coupon.fixedDiscount,
-
-    discount:
-      coupon.discount,
+    discount,
 
     total,
+
+    couponCode:
+      normalizedCoupon || null,
   };
 }
 
-/* =========================================================
-   DOWNLOAD TOKEN HELPERS
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| SECURE DOWNLOAD TOKEN HELPERS
+|--------------------------------------------------------------------------
+*/
 
 function generateDownloadToken() {
   return crypto
@@ -496,17 +326,9 @@ function hashDownloadToken(token) {
 }
 
 function getDownloadExpiryDate() {
-  const expiryDays =
-    Number.isFinite(
-      DOWNLOAD_TOKEN_EXPIRY_DAYS
-    ) &&
-    DOWNLOAD_TOKEN_EXPIRY_DAYS > 0
-      ? DOWNLOAD_TOKEN_EXPIRY_DAYS
-      : 30;
-
   return new Date(
     Date.now() +
-      expiryDays *
+      DOWNLOAD_TOKEN_EXPIRY_DAYS *
         24 *
         60 *
         60 *
@@ -514,22 +336,35 @@ function getDownloadExpiryDate() {
   );
 }
 
-/* =========================================================
-   CREATE SECURE DOWNLOAD LINKS
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| CREATE SECURE DOWNLOAD LINKS
+|--------------------------------------------------------------------------
+*/
 
 async function createDownloadLinks(
   connection,
+  orderId,
   items
 ) {
-  const backendUrl = (
+  const backendUrl =
     process.env.BACKEND_PUBLIC_URL ||
-    "https://tresco.firm.in"
-  ).replace(/\/+$/, "");
+    `http://localhost:${
+      process.env.PORT || 5000
+    }`;
 
   const downloads = [];
 
   for (const item of items) {
+    /*
+    |--------------------------------------------------------------------------
+    | Check if token already exists
+    |--------------------------------------------------------------------------
+    |
+    | Prevent duplicate tokens when verification happens more than once.
+    |
+    */
+
     const [
       existingTokens,
     ] = await connection.execute(
@@ -546,11 +381,18 @@ async function createDownloadLinks(
       [item.id]
     );
 
-    /*
-     * Existing raw token cannot be recovered
-     * because only the SHA-256 hash is stored.
-     */
-    if (existingTokens.length > 0) {
+    if (
+      existingTokens.length > 0
+    ) {
+      /*
+      |--------------------------------------------------------------------------
+      | Raw token cannot be recovered.
+      |--------------------------------------------------------------------------
+      |
+      | Only SHA-256 hash is stored.
+      |
+      */
+
       continue;
     }
 
@@ -604,232 +446,245 @@ async function createDownloadLinks(
   return downloads;
 }
 
-/* =========================================================
-   CUSTOMER NORMALIZATION
-========================================================= */
-
-function normalizeCustomer(customer) {
-  if (!customer) {
-    throw new HttpError(
-      "Customer details are required",
-      400
-    );
-  }
-
-  const firstName =
-    String(
-      customer.firstName || ""
-    ).trim();
-
-  const lastName =
-    String(
-      customer.lastName || ""
-    ).trim();
-
-  const email =
-    String(
-      customer.email || ""
-    )
-      .trim()
-      .toLowerCase();
-
-  const country =
-    String(
-      customer.country || ""
-    ).trim();
-
-  const state =
-    String(
-      customer.state || ""
-    ).trim();
-
-  const address =
-    String(
-      customer.address || ""
-    ).trim();
-
-  const city =
-    String(
-      customer.city || ""
-    ).trim();
-
-  const pincode =
-    String(
-      customer.pincode || ""
-    ).trim();
-
-  const notes =
-    String(
-      customer.notes || ""
-    ).trim();
-
-  if (!firstName) {
-    throw new HttpError(
-      "firstName is required",
-      400
-    );
-  }
-
-  if (!lastName) {
-    throw new HttpError(
-      "lastName is required",
-      400
-    );
-  }
-
-  if (!email) {
-    throw new HttpError(
-      "email is required",
-      400
-    );
-  }
-
-  if (!country) {
-    throw new HttpError(
-      "country is required",
-      400
-    );
-  }
-
-  if (!state) {
-    throw new HttpError(
-      "state is required",
-      400
-    );
-  }
-
-  const emailRegex =
-    /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-  if (!emailRegex.test(email)) {
-    throw new HttpError(
-      "Invalid email address",
-      400
-    );
-  }
-
-  return {
-    firstName,
-    lastName,
-    email,
-    country,
-    state,
-    address,
-    city,
-    pincode,
-    notes,
-  };
-}
-
-/* =========================================================
-   CREATE ORDER
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| CREATE ORDER
+|--------------------------------------------------------------------------
+*/
 
 const createOrder = async (
   req,
   res
 ) => {
-  let connection = null;
+  let connection;
 
   try {
-    const body =
-      parseRequestBody(
-        req.body
-      );
-
     const {
       items,
       couponCode,
       customer,
-    } = body;
+    } = req.body;
 
-    /* ================================================
-       CUSTOMER
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | Validate customer
+    |--------------------------------------------------------------------------
+    */
 
-    const normalizedCustomer =
-      normalizeCustomer(
-        customer
-      );
+    if (!customer) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Customer details are required",
+      });
+    }
 
-    /* ================================================
-       PRODUCTS
-    ================================================ */
+    const requiredFields = [
+      "firstName",
+      "lastName",
+      "email",
+      "country",
+      "address",
+      "city",
+      "pincode",
+    ];
+
+    for (
+      const field of requiredFields
+    ) {
+      if (
+        !customer[field]
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            `${field} is required`,
+        });
+      }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Validate email
+    |--------------------------------------------------------------------------
+    */
+
+    const email = String(
+      customer.email
+    )
+      .trim()
+      .toLowerCase();
+
+    const emailRegex =
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (
+      !emailRegex.test(email)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid email address",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Validate products
+    |--------------------------------------------------------------------------
+    */
 
     const products =
       normalizeItems(items);
 
-    /* ================================================
-       PRICING
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | Calculate pricing
+    |--------------------------------------------------------------------------
+    */
 
     const pricing =
       calculatePricing(
         products,
-        normalizedCustomer.country,
-        couponCode
+        couponCode,
+        customer.country
       );
 
-    /* ================================================
-       ORDER NUMBER
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | FREE100 SERVER-SIDE VALIDATION
+    |--------------------------------------------------------------------------
+    |
+    | FREE100 can ONLY:
+    |
+    | - be used in India
+    | - have INR currency
+    | - produce a zero total
+    |
+    */
+
+    const isFreeOrder =
+      pricing.total === 0 &&
+      pricing.couponCode ===
+        "FREE100" &&
+      isIndia(
+        customer.country
+      );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Zero-value orders must be FREE100 India orders
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+      pricing.total === 0 &&
+      !isFreeOrder
+    ) {
+      throw new Error(
+        "A zero-value order is only available for valid Indian FREE100 orders."
+      );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Determine currency
+    |--------------------------------------------------------------------------
+    */
+
+    const currency =
+      isIndia(
+        customer.country
+      )
+        ? "INR"
+        : "USD";
+
+    /*
+    |--------------------------------------------------------------------------
+    | FREE100 currency protection
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+      pricing.couponCode ===
+        "FREE100" &&
+      currency !== "INR"
+    ) {
+      throw new Error(
+        "FREE100 is available only for Indian customers."
+      );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Generate order number
+    |--------------------------------------------------------------------------
+    */
 
     const orderNumber =
       generateOrderNumber();
 
-    /* ================================================
-       RAZORPAY ORDER
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | CREATE RAZORPAY ORDER
+    |--------------------------------------------------------------------------
+    |
+    | IMPORTANT:
+    |
+    | FREE100 orders do NOT go to Razorpay.
+    |
+    */
 
-    const razorpayOrder =
-      await razorpay.orders.create({
-        amount:
-          toRazorpayAmount(
-            pricing.total
-          ),
+    let razorpayOrder =
+      null;
 
-        /*
-         * India = INR
-         * International = USD
-         */
-        currency:
-          pricing.currency,
+    if (!isFreeOrder) {
+      razorpayOrder =
+        await razorpay.orders.create(
+          {
+            amount:
+              Math.round(
+                pricing.total *
+                  100
+              ),
 
-        receipt:
-          orderNumber,
+            currency,
 
-        notes: {
-          order_number:
-            orderNumber,
+            receipt:
+              orderNumber,
 
-          customer_email:
-            normalizedCustomer.email,
+            notes: {
+              order_number:
+                orderNumber,
 
-          customer_country:
-            normalizedCustomer.country,
+              products:
+                products
+                  .map(
+                    (product) =>
+                      product.id
+                  )
+                  .join(","),
+            },
+          }
+        );
+    }
 
-          pricing_type:
-            pricing.isCompleteCollection
-              ? "BUNDLE"
-              : "INDIVIDUAL",
-
-          coupon_code:
-            pricing.couponCode || "",
-        },
-      });
-
-    /* ================================================
-       DATABASE CONNECTION
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | DATABASE CONNECTION
+    |--------------------------------------------------------------------------
+    */
 
     connection =
       await pool.getConnection();
 
     await connection.beginTransaction();
 
-    /* ================================================
-       CUSTOMER
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | SAVE CUSTOMER
+    |--------------------------------------------------------------------------
+    */
 
     const [
       customerResult,
@@ -850,32 +705,39 @@ const createOrder = async (
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
-        normalizedCustomer.firstName,
-
-        normalizedCustomer.lastName,
-
-        normalizedCustomer.email,
-
-        normalizedCustomer.country,
-
-        normalizedCustomer.state,
-
-        normalizedCustomer.address,
-
-        normalizedCustomer.city,
-
-        normalizedCustomer.pincode,
-
-        normalizedCustomer.notes || null,
+        customer.firstName,
+        customer.lastName,
+        email,
+        customer.country,
+        customer.state ||
+          null,
+        customer.address,
+        customer.city,
+        customer.pincode,
+        customer.notes ||
+          null,
       ]
     );
 
     const customerId =
       customerResult.insertId;
 
-    /* ================================================
-       ORDER
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | RAZORPAY ORDER ID / FREE ORDER ID
+    |--------------------------------------------------------------------------
+    */
+
+    const databaseOrderId =
+      isFreeOrder
+        ? `FREE-${orderNumber}`
+        : razorpayOrder.id;
+
+    /*
+    |--------------------------------------------------------------------------
+    | SAVE ORDER
+    |--------------------------------------------------------------------------
+    */
 
     const [
       orderResult,
@@ -893,7 +755,7 @@ const createOrder = async (
           razorpay_order_id,
           status
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         orderNumber,
@@ -908,28 +770,33 @@ const createOrder = async (
 
         pricing.couponCode,
 
-        pricing.currency,
+        currency,
 
-        razorpayOrder.id,
+        databaseOrderId,
+
+        isFreeOrder
+          ? "PAID"
+          : "PENDING",
       ]
     );
 
     const orderId =
       orderResult.insertId;
 
-    /* ================================================
-       ORDER ITEMS
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | SAVE ORDER ITEMS
+    |--------------------------------------------------------------------------
+    */
 
-    for (const product of products) {
-      const itemPrice =
-        Number(
-          product[
-            pricing.currency
-          ]
-        );
+    const savedItems = [];
 
-      await connection.execute(
+    for (
+      const product of products
+    ) {
+      const [
+        itemResult,
+      ] = await connection.execute(
         `
           INSERT INTO order_items
           (
@@ -947,70 +814,213 @@ const createOrder = async (
 
           product.name,
 
-          itemPrice,
+          product.price,
         ]
       );
+
+      /*
+      |--------------------------------------------------------------------------
+      | Keep DB item information for download token generation.
+      |--------------------------------------------------------------------------
+      */
+
+      savedItems.push({
+        id:
+          itemResult.insertId,
+
+        order_id:
+          orderId,
+
+        product_id:
+          product.id,
+
+        product_name:
+          product.name,
+
+        price:
+          product.price,
+      });
     }
 
-    /* ================================================
-       COMMIT
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | FREE100 ORDER
+    |--------------------------------------------------------------------------
+    |
+    | Mark as PAID and immediately create secure downloads.
+    |
+    */
+
+    let downloads = [];
+
+    let freePaymentId =
+      null;
+
+    if (isFreeOrder) {
+      freePaymentId =
+        `FREE100-${orderNumber}`;
+
+      await connection.execute(
+        `
+          UPDATE orders
+          SET
+            razorpay_payment_id = ?,
+            status = 'PAID',
+            paid_at = NOW()
+          WHERE id = ?
+        `,
+        [
+          freePaymentId,
+          orderId,
+        ]
+      );
+
+      downloads =
+        await createDownloadLinks(
+          connection,
+          orderId,
+          savedItems
+        );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | COMMIT
+    |--------------------------------------------------------------------------
+    */
 
     await connection.commit();
 
-    /* ================================================
-       RESPONSE
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | SEND PURCHASE EMAIL
+    |--------------------------------------------------------------------------
+    |
+    | Email failure should never cancel the order.
+    |
+    */
+
+    try {
+      if (
+        customer &&
+        customer.email &&
+        downloads.length > 0
+      ) {
+        const emailItems =
+          savedItems
+            .map((item) => {
+              const download =
+                downloads.find(
+                  (downloadItem) =>
+                    downloadItem.productId ===
+                    item.product_id
+                );
+
+              if (!download) {
+                return null;
+              }
+
+              return {
+                product_name:
+                  item.product_name,
+
+                download_url:
+                  download.url,
+              };
+            })
+            .filter(Boolean);
+
+        if (
+          emailItems.length > 0
+        ) {
+          await sendPurchaseEmail(
+            {
+              customer: {
+                first_name:
+                  customer.firstName,
+
+                email:
+                  email,
+              },
+
+              orderNumber,
+
+              items:
+                emailItems,
+
+              total:
+                pricing.total,
+            }
+          );
+        }
+      }
+    } catch (
+      emailError
+    ) {
+      console.error(
+        "⚠️ Purchase email could not be sent:",
+        emailError.message
+      );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | FINAL RESPONSE
+    |--------------------------------------------------------------------------
+    */
 
     return res.status(200).json({
       success: true,
+
+      message: isFreeOrder
+        ? "FREE100 order completed successfully"
+        : "Payment order created successfully",
+
+      freeOrder:
+        isFreeOrder,
+
+      payment_id:
+        freePaymentId,
 
       order:
         razorpayOrder,
 
       orderNumber,
 
+      items:
+        savedItems,
+
+      downloads,
+
       pricing: {
-        currency:
-          pricing.currency,
-
-        currencySymbol:
-          pricing.currencySymbol,
-
-        individualSubtotal:
-          pricing.individualSubtotal,
-
         subtotal:
           pricing.subtotal,
 
         bundleSaving:
           pricing.bundleSaving,
 
-        couponCode:
-          pricing.couponCode,
-
-        couponType:
-          pricing.couponType,
-
-        couponRate:
-          pricing.couponRate,
-
-        fixedDiscount:
-          pricing.fixedDiscount,
-
         discount:
           pricing.discount,
 
         total:
           pricing.total,
+
+        currency,
       },
     });
-
   } catch (error) {
+    /*
+    |--------------------------------------------------------------------------
+    | ROLLBACK
+    |--------------------------------------------------------------------------
+    */
+
     if (connection) {
       try {
         await connection.rollback();
-      } catch (rollbackError) {
+      } catch (
+        rollbackError
+      ) {
         console.error(
           "Rollback error:",
           rollbackError
@@ -1023,22 +1033,13 @@ const createOrder = async (
       error
     );
 
-    const statusCode =
-      error instanceof HttpError
-        ? error.statusCode
-        : 500;
+    return res.status(400).json({
+      success: false,
 
-    return res
-      .status(statusCode)
-      .json({
-        success: false,
-
-        message:
-          error instanceof HttpError
-            ? error.message
-            : "Unable to create payment order",
-      });
-
+      message:
+        error.message ||
+        "Unable to create payment order",
+    });
   } finally {
     if (connection) {
       connection.release();
@@ -1046,59 +1047,77 @@ const createOrder = async (
   }
 };
 
-/* =========================================================
-   VERIFY PAYMENT
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| VERIFY PAYMENT
+|--------------------------------------------------------------------------
+*/
 
 const verifyPayment = async (
   req,
   res
 ) => {
-  let connection = null;
+  let connection;
 
   try {
-    const body =
-      parseRequestBody(
-        req.body
-      );
-
     const {
       razorpay_order_id,
       razorpay_payment_id,
       razorpay_signature,
-    } = body;
+    } = req.body;
 
-    /* ================================================
-       VALIDATION
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | Validate payment details
+    |--------------------------------------------------------------------------
+    */
 
     if (
       !razorpay_order_id ||
       !razorpay_payment_id ||
       !razorpay_signature
     ) {
-      throw new HttpError(
-        "Missing payment details",
-        400
-      );
+      return res.status(400).json({
+        success: false,
+        message:
+          "Missing payment details",
+      });
     }
 
-    /* ================================================
-       VERIFY SIGNATURE
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | Verify Razorpay signature
+    |--------------------------------------------------------------------------
+    */
 
-    const signatureBody =
+    const body =
       razorpay_order_id +
       "|" +
       razorpay_payment_id;
+
+    const secret =
+      process.env
+        .RAZORPAY_KEY_SECRET;
+
+    if (!secret) {
+      console.error(
+        "RAZORPAY_KEY_SECRET is not configured."
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          "Payment verification is not configured.",
+      });
+    }
 
     const expectedSignature =
       crypto
         .createHmac(
           "sha256",
-          process.env.RAZORPAY_KEY_SECRET
+          secret
         )
-        .update(signatureBody)
+        .update(body)
         .digest("hex");
 
     const receivedSignature =
@@ -1110,10 +1129,11 @@ const verifyPayment = async (
       expectedSignature.length !==
       receivedSignature.length
     ) {
-      throw new HttpError(
-        "Invalid payment signature",
-        400
-      );
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid payment signature",
+      });
     }
 
     const isValid =
@@ -1129,60 +1149,69 @@ const verifyPayment = async (
       );
 
     if (!isValid) {
-      throw new HttpError(
-        "Invalid payment signature",
-        400
-      );
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid payment signature",
+      });
     }
 
-    /* ================================================
-       DATABASE
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | DATABASE CONNECTION
+    |--------------------------------------------------------------------------
+    */
 
     connection =
       await pool.getConnection();
 
-    const [
-      orders,
-    ] = await connection.execute(
-      `
-        SELECT
-          id,
-          order_number,
-          customer_id,
-          subtotal,
-          discount,
-          total,
-          currency,
-          status,
-          razorpay_payment_id
-        FROM orders
-        WHERE razorpay_order_id = ?
-        LIMIT 1
-      `,
-      [razorpay_order_id]
-    );
+    /*
+    |--------------------------------------------------------------------------
+    | FIND ORDER
+    |--------------------------------------------------------------------------
+    */
 
-    if (orders.length === 0) {
-      throw new HttpError(
-        "Order not found",
-        404
+    const [orders] =
+      await connection.execute(
+        `
+          SELECT
+            id,
+            order_number,
+            customer_id,
+            total,
+            currency,
+            status,
+            razorpay_payment_id
+          FROM orders
+          WHERE razorpay_order_id = ?
+          LIMIT 1
+        `,
+        [
+          razorpay_order_id,
+        ]
       );
+
+    if (
+      orders.length === 0
+    ) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Order not found",
+      });
     }
 
     const order =
       orders[0];
 
-    /* ================================================
-       ALREADY PAID
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | GET ORDER ITEMS
+    |--------------------------------------------------------------------------
+    */
 
-    if (
-      order.status === "PAID"
-    ) {
-      const [
-        items,
-      ] = await connection.execute(
+    const [items] =
+      await connection.execute(
         `
           SELECT
             id,
@@ -1196,6 +1225,51 @@ const verifyPayment = async (
         [order.id]
       );
 
+    /*
+    |--------------------------------------------------------------------------
+    | GET CUSTOMER
+    |--------------------------------------------------------------------------
+    */
+
+    const [customers] =
+      await connection.execute(
+        `
+          SELECT
+            id,
+            first_name,
+            last_name,
+            email,
+            country,
+            state,
+            address,
+            city,
+            pincode
+          FROM customers
+          WHERE id = ?
+          LIMIT 1
+        `,
+        [
+          order.customer_id,
+        ]
+      );
+
+    const customer =
+      customers[0] || null;
+
+    /*
+    |--------------------------------------------------------------------------
+    | ALREADY PAID
+    |--------------------------------------------------------------------------
+    |
+    | If Razorpay verification is sent twice,
+    | do not create duplicate download tokens.
+    |
+    */
+
+    if (
+      order.status ===
+      "PAID"
+    ) {
       return res.status(200).json({
         success: true,
 
@@ -1215,14 +1289,10 @@ const verifyPayment = async (
         currency:
           order.currency,
 
-        subtotal:
-          Number(order.subtotal),
-
-        discount:
-          Number(order.discount),
-
         total:
           Number(order.total),
+
+        customer,
 
         items,
 
@@ -1230,64 +1300,19 @@ const verifyPayment = async (
       });
     }
 
-    /* ================================================
-       CUSTOMER
-    ================================================ */
-
-    const [
-      customers,
-    ] = await connection.execute(
-      `
-        SELECT
-          id,
-          first_name,
-          last_name,
-          email,
-          country,
-          state,
-          address,
-          city,
-          pincode,
-          notes
-        FROM customers
-        WHERE id = ?
-        LIMIT 1
-      `,
-      [order.customer_id]
-    );
-
-    const customer =
-      customers[0] || null;
-
-    /* ================================================
-       ORDER ITEMS
-    ================================================ */
-
-    const [
-      items,
-    ] = await connection.execute(
-      `
-        SELECT
-          id,
-          product_id,
-          product_name,
-          price
-        FROM order_items
-        WHERE order_id = ?
-        ORDER BY id ASC
-      `,
-      [order.id]
-    );
-
-    /* ================================================
-       TRANSACTION
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | START TRANSACTION
+    |--------------------------------------------------------------------------
+    */
 
     await connection.beginTransaction();
 
-    /* ================================================
-       MARK PAID
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | MARK ORDER AS PAID
+    |--------------------------------------------------------------------------
+    */
 
     await connection.execute(
       `
@@ -1308,62 +1333,107 @@ const verifyPayment = async (
       ]
     );
 
-    /* ================================================
-       DOWNLOAD LINKS
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | GENERATE SECURE DOWNLOAD TOKENS
+    |--------------------------------------------------------------------------
+    */
 
     const downloads =
       await createDownloadLinks(
         connection,
+        order.id,
         items
       );
 
-    /* ================================================
-       COMMIT
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | COMMIT
+    |--------------------------------------------------------------------------
+    */
 
     await connection.commit();
 
-    /* ================================================
-       PURCHASE EMAIL
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | SEND PURCHASE EMAIL
+    |--------------------------------------------------------------------------
+    |
+    | Email failure does NOT fail payment.
+    |
+    */
 
     try {
       if (
         customer &&
-        customer.email
+        customer.email &&
+        downloads.length > 0
       ) {
-        await sendPurchaseEmail({
-          customer: {
-            first_name:
-              customer.first_name,
+        const emailItems =
+          items
+            .map((item) => {
+              const download =
+                downloads.find(
+                  (
+                    downloadItem
+                  ) =>
+                    downloadItem.productId ===
+                    item.product_id
+                );
 
-            email:
-              customer.email,
-          },
+              if (!download) {
+                return null;
+              }
 
-          orderNumber:
-            order.order_number,
+              return {
+                product_name:
+                  item.product_name,
 
-          items,
+                download_url:
+                  download.url,
+              };
+            })
+            .filter(Boolean);
 
-          total:
-            order.total,
+        if (
+          emailItems.length > 0
+        ) {
+          await sendPurchaseEmail(
+            {
+              customer: {
+                first_name:
+                  customer.first_name,
 
-          currency:
-            order.currency,
-        });
+                email:
+                  customer.email,
+              },
+
+              orderNumber:
+                order.order_number,
+
+              items:
+                emailItems,
+
+              total:
+                order.total,
+            }
+          );
+        }
       }
-    } catch (emailError) {
+    } catch (
+      emailError
+    ) {
       console.error(
         "⚠️ Purchase email could not be sent:",
         emailError.message
       );
     }
 
-    /* ================================================
-       RESPONSE
-    ================================================ */
+    /*
+    |--------------------------------------------------------------------------
+    | FINAL RESPONSE
+    |--------------------------------------------------------------------------
+    */
 
     return res.status(200).json({
       success: true,
@@ -1383,12 +1453,6 @@ const verifyPayment = async (
       currency:
         order.currency,
 
-      subtotal:
-        Number(order.subtotal),
-
-      discount:
-        Number(order.discount),
-
       total:
         Number(order.total),
 
@@ -1398,12 +1462,19 @@ const verifyPayment = async (
 
       downloads,
     });
-
   } catch (error) {
+    /*
+    |--------------------------------------------------------------------------
+    | ROLLBACK
+    |--------------------------------------------------------------------------
+    */
+
     if (connection) {
       try {
         await connection.rollback();
-      } catch (rollbackError) {
+      } catch (
+        rollbackError
+      ) {
         console.error(
           "Rollback error:",
           rollbackError
@@ -1416,22 +1487,12 @@ const verifyPayment = async (
       error
     );
 
-    const statusCode =
-      error instanceof HttpError
-        ? error.statusCode
-        : 500;
+    return res.status(500).json({
+      success: false,
 
-    return res
-      .status(statusCode)
-      .json({
-        success: false,
-
-        message:
-          error instanceof HttpError
-            ? error.message
-            : "Payment verification failed",
-      });
-
+      message:
+        "Payment verification failed",
+    });
   } finally {
     if (connection) {
       connection.release();
@@ -1439,9 +1500,11 @@ const verifyPayment = async (
   }
 };
 
-/* =========================================================
-   EXPORT
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| EXPORT
+|--------------------------------------------------------------------------
+*/
 
 module.exports = {
   createOrder,
